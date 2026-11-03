@@ -129,7 +129,7 @@ class SubScore:
 @dataclass(frozen=True)
 class HardConstraintEval:
     constraint: str
-    status: str                       # pass | soft_penalty | unknown | exclude
+    status: str        # pass | soft_penalty | unknown | user_skipped | exclude
     detail: str = ""
 
 
