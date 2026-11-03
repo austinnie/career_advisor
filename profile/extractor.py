@@ -77,6 +77,7 @@ class StubProfileExtractor(ProfileExtractor):
             profile_id=_new_profile_id(),
             hard_constraints={
                 "region": EvidenceValue.missing(),
+                "education_level": EvidenceValue.missing(),
                 "max_education_investment_years": EvidenceValue.missing(),
                 "economic_pressure_period": EvidenceValue.missing(),
                 "license_obtainable": EvidenceValue.missing(),
@@ -88,6 +89,7 @@ class StubProfileExtractor(ProfileExtractor):
             exclusions=[],
             missing_fields=[
                 "/hard_constraints/region",
+                "/hard_constraints/education_level",
                 "/hard_constraints/max_education_investment_years",
                 "/hard_constraints/economic_pressure_period",
                 "/hard_constraints/license_obtainable",
@@ -125,6 +127,7 @@ def _payload_to_profile(payload: dict) -> UserProfile:
         profile_id=_new_profile_id(),
         hard_constraints={
             "region": _safe_ev(hc.get("region")),
+            "education_level": _safe_ev(hc.get("education_level")),
             "max_education_investment_years": _safe_ev(hc.get("max_education_investment_years")),
             "economic_pressure_period": _safe_ev(hc.get("economic_pressure_period")),
             "license_obtainable": _safe_ev(hc.get("license_obtainable")),

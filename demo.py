@@ -11,13 +11,14 @@ from career_advisor.explanation.input_builder import build_explanation_input
 from career_advisor.explanation.generator import StubExplanationGenerator
 from career_advisor.explanation.validator import validate
 from career_advisor.profile.extractor import StubProfileExtractor
-
+from career_advisor.data.seed_loader import snapshot_exists as _snapshot_exists
 
 def make_demo_profile() -> UserProfile:
     return UserProfile(
         profile_id="demo-1",
         hard_constraints={
             "region": EvidenceValue(["杭州"], "目前在杭州，暂时不想离开", "explicit"),
+            "education_level": EvidenceValue("bachelor", "本科读的是汉语言文学", "explicit"),
             "license_obtainable": EvidenceValue.missing(),
             "max_education_investment_years": EvidenceValue.missing(),
             "economic_pressure_period": EvidenceValue.missing(),
@@ -78,6 +79,19 @@ def make_demo_prospects() -> list[Prospect]:
 def run_demo():
     profile = make_demo_profile()
     occupations = load_seed_occupations()
+    print(f"=== 职业库 ===")
+    print(f"  来源: {'快照' if _snapshot_exists() else '手工种子（回退）'}")
+    print(f"  总数: {len(occupations)}")
+    if _snapshot_exists():
+        families = {o.occupation_family for o in occupations}
+        with_skills = sum(1 for o in occupations if o.skill_vector)
+        print(f"  覆盖族数: {len(families)} / 20")
+        print(f"  含技能向量: {with_skills}")
+    else:
+        print(f"  提示: 未发现 O*NET 快照。运行 "
+              f"`python -m career_advisor.data.build_snapshot --onet-dir <路径>` "
+              f"以加载真实 O*NET 职业库。")
+    print()
     prospects = make_demo_prospects()
     cfg = ScoringConfig()
 

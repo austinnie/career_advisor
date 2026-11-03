@@ -103,12 +103,15 @@ class EvidenceValue:
 class UserProfile:
     profile_id: str
     hard_constraints: dict[str, EvidenceValue] = field(default_factory=dict)
+    # hard_constraints 的键为：
+    #   "region" | "max_education_investment_years" | "economic_pressure_period"
+    #   | "license_obtainable" | "education_level"      ← 新增
     interests_riasec: dict[str, EvidenceValue] = field(default_factory=dict)
-    skills: list[dict] = field(default_factory=list)     # [{skill_id, proficiency, evidence, source_span}]
+    skills: list[dict] = field(default_factory=list)
     values_weights: dict[str, EvidenceValue] = field(default_factory=dict)
     work_style_preferences: dict[str, EvidenceValue] = field(default_factory=dict)
     exclusions: list[dict] = field(default_factory=list)
-    field_status: dict[str, str] = field(default_factory=dict)  # json_pointer -> FieldStatus
+    field_status: dict[str, str] = field(default_factory=dict)
     missing_fields: list[str] = field(default_factory=list)
 
 

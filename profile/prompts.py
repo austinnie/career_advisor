@@ -32,6 +32,10 @@ L1_USER_TEMPLATE = """# raw_text
 - /work_style_preferences/indoor_outdoor /team_independent /travel_tolerance
 - /exclusions （[{type, value, source_span}]；
               type ∈ occupation_family|work_context|region|occupation）
+- /hard_constraints/education_level （最高已获得学历）
+   取值 ∈ "high_school" | "associate" | "bachelor" | "master" | "phd"
+   证据必须为原文中明确表达学历的片段（如「本科」「硕士在读」「大专」）；
+   未提及则 value=null。              
 
 # 输出结构
 {{
