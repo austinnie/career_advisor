@@ -10,6 +10,9 @@ from .onet_adapter import ONetOccupationAdapter
 from .skill_adjacency import (SkillAdjacency, build_adjacency_from_onet,
                                save_adjacency, load_adjacency)
 
+from .cn_samples import load_sample_cn_occupations
+from .cn_enricher import enrich as enrich_cn
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,11 +24,48 @@ def snapshot_exists() -> bool:
     return SNAPSHOT_PATH.exists()
     
 def load_occupations() -> list[Occupation]:
+    """加载优先级：
+    1. O*NET 快照存在 → 返回快照
+    2. 否则：大典样本 + enrichment（若有 O*NET 快照可跨源），
+       与手工种子合并（大典职业排在前面）
+    3. 大典样本不可用时 → 纯手工种子
+    """
     if SNAPSHOT_PATH.exists():
         return _load_snapshot(SNAPSHOT_PATH)
-    logger.info("Occupation snapshot not found at %s; falling back to hand-seeded.",
-                SNAPSHOT_PATH)
-    return _load_hand_seeded()
+
+    logger.info("O*NET snapshot not found; falling back to CN samples + hand seeds")
+    try:
+        cn_occs = load_sample_cn_occupations()
+    except Exception as exc:
+        logger.warning("CN sample load failed: %s; falling back to hand seeds only", exc)
+        return _load_hand_seeded()
+
+    # 尝试从手工种子中提取 O*NET 职业用于 enrichment。
+    # 若无快照，enrich 无跨源可补，大典职业保持骨架。
+    onet_by_soc = _onet_by_soc_from_snapshot_or_empty()
+    cn_enriched = enrich_cn(cn_occs, onet_by_soc)
+
+    hand = _load_hand_seeded()
+    # 若手工种子中有与大典同 occupation_id 的（如 CN-2022-2-02-10-08），
+    # 手工种子优先——它是人工精标过的，覆盖骨架
+    hand_ids = {o.occupation_id for o in hand}
+    merged = [o for o in cn_enriched if o.occupation_id not in hand_ids]
+    merged.extend(hand)
+    return merged
+
+
+def _onet_by_soc_from_snapshot_or_empty() -> dict[str, Occupation]:
+    if not SNAPSHOT_PATH.exists():
+        return {}
+    import json
+    payload = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    out: dict[str, Occupation] = {}
+    for item in payload["occupations"]:
+        occ = Occupation(**item)
+        soc = (occ.taxonomy_refs or {}).get("onet_soc_2018", {}).get("soc_code")
+        if soc:
+            out[soc] = occ
+    return out
 
 
 def _load_snapshot(path: Path) -> list[Occupation]:

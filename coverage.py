@@ -40,25 +40,37 @@ class CoverageDeclaration:
 
 
 def build_coverage(occupations) -> CoverageDeclaration:
-    """从职业库实查生成。审计缺陷 4.1—4.4 的修复点。"""
     total = len(occupations)
-    matchable = sum(1 for o in occupations if o.skill_vector is not None
-                    and o.occupation_family)
-    excluded = total - matchable
+    with_skill = sum(1 for o in occupations
+                     if o.skill_vector is not None and o.occupation_family)
+    skeleton_only = total - with_skill
+    by_taxonomy = {"cn_dadian": 0, "onet_soc": 0, "other": 0}
+    for o in occupations:
+        refs = o.taxonomy_refs or {}
+        if "cn_dadian_2022" in refs:
+            by_taxonomy["cn_dadian"] += 1
+        elif "onet_soc_2018" in refs:
+            by_taxonomy["onet_soc"] += 1
+        else:
+            by_taxonomy["other"] += 1
+
     sampling_note = (
-        f"全量入库 {total} 个职业；其中 {matchable} 个具有 skill_vector 与 occupation_family，"
-        f"可参与匹配；{excluded} 个因缺少结构化技能字段或族标注未参与匹配。"
+        f"已收录 {total} 个职业；其中 {with_skill} 个具备结构化技能字段可参与匹配；"
+        f"{skeleton_only} 个仅有分类骨架（大典描述），未参与匹配。"
+        f"来源分布：大典 {by_taxonomy['cn_dadian']}、O*NET {by_taxonomy['onet_soc']}、"
+        f"其他 {by_taxonomy['other']}。"
     ) if total else "职业库为空，覆盖声明不成立。"
+
     return CoverageDeclaration(
         taxonomy_versions=TAXONOMY_VERSIONS,
-        matchable_occupation_count=matchable,
+        matchable_occupation_count=with_skill,
         total_occupation_count=total,
-        excluded_count=excluded,
+        excluded_count=skeleton_only,
         sampling_note=sampling_note,
         not_covered=NOT_COVERED,
         data_snapshot_date=date.today().isoformat(),
     )
-
+    
 
 DISCLAIMER = "本结果为辅助决策参考，不构成就业承诺或投资建议。"
 LICENSE_NOTE = "该职业可能涉及执照/资质要求，请自行核实当地最新政策。"

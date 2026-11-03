@@ -460,6 +460,48 @@ def run_preference_adjuster_demo():
         "新 profile 应反映调节"
     print("\n✓ 原 profile 未被修改，新 profile 反映调节")
     
+def run_cn_library_demo():
+    """展示大典骨架入库后覆盖声明的变化。"""
+    from career_advisor.data.seed_loader import _onet_by_soc_from_snapshot_or_empty
+    from career_advisor.data.cn_samples import load_sample_cn_occupations
+    from career_advisor.data.cn_enricher import enrich as enrich_cn
+
+    print("\n" + "=" * 60)
+    print("=== 演示：中国职业库骨架 ===")
+    print("=" * 60)
+
+    cn_occs = load_sample_cn_occupations()
+    onet_by_soc = _onet_by_soc_from_snapshot_or_empty()
+    enriched = enrich_cn(cn_occs, onet_by_soc)
+
+    print(f"\n大典样本: {len(cn_occs)} 条")
+    print(f"O*NET 快照可用于 enrichment: {len(onet_by_soc)} 条 SOC")
+    for o in enriched:
+        has_skill = "有技能" if o.skill_vector else "仅骨架"
+        flags = ",".join(o.data_quality_flags)
+        print(f"  [{has_skill}] {o.occupation_id}  {o.preferred_name} ({o.occupation_family})")
+        if flags:
+            print(f"          flags: {flags}")
+
+    # 将样本大典 + 手工种子合并后跑一次匹配
+    all_occs = load_seed_occupations()
+    print(f"\n合并后职业库: {len(all_occs)} 条")
+    prospects = make_demo_prospects()
+    cfg = ScoringConfig()
+    profile = make_demo_profile()
+    result = match(profile, all_occs, prospects, cfg)
+    print(f"匹配状态: {result.status}, Top-N: {len(result.ranked_items)}")
+    print(f"被排除: {len(result.excluded_candidates)} 条")
+    for e in result.excluded_candidates:
+        print(f"  {e.occupation_id}: {e.reason_code}")
+
+    from career_advisor.coverage import build_coverage
+    cov = build_coverage(all_occs).__dict__
+    print(f"\n覆盖边界:")
+    print(f"  总数: {cov['total_occupation_count']}")
+    print(f"  可匹配: {cov['matchable_occupation_count']}")
+    print(f"  仅骨架: {cov['excluded_count']}")
+    print(f"  说明: {cov['sampling_note']}")
 
 if __name__ == "__main__":
     run_demo()
@@ -469,3 +511,4 @@ if __name__ == "__main__":
     run_region_admission_demo()        # 新增
     run_preference_adjuster_demo()     # 新增    
     run_skill_neighbor_demo()      # 新增
+    run_cn_library_demo()
