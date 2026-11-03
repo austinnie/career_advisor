@@ -31,10 +31,12 @@ def make_demo_profile() -> UserProfile:
             "S": EvidenceValue(60, "沟通协调比较多", "inferred"),
         },
         skills=[
-            {"skill_id": "programming_python", "proficiency": "advanced",
-             "evidence": "work_experience", "source_span": "实习做过 Python 后端"},
-            {"skill_id": "spreadsheet_excel", "proficiency": "intermediate",
-             "evidence": "work_experience", "source_span": "用 Excel 做报表"},
+            {"skill_id": "programming", "proficiency": "advanced",
+             "evidence": "work_experience", "source_span": "实习做过后端开发"},
+            {"skill_id": "complex_problem_solving", "proficiency": "intermediate",
+             "evidence": "work_experience", "source_span": "解决过复杂问题"},
+            {"skill_id": "active_learning", "proficiency": "intermediate",
+             "evidence": "self_report", "source_span": "喜欢钻研新技术"},
         ],
         values_weights={
             "salary": EvidenceValue(0.5, "希望收入稳定", "inferred"),
@@ -462,20 +464,30 @@ def run_preference_adjuster_demo():
     
 def run_cn_library_demo():
     """展示大典骨架入库后覆盖声明的变化。"""
-    from career_advisor.data.seed_loader import _onet_by_soc_from_snapshot_or_empty
+    # 删掉这行：from career_advisor.data.seed_loader import _onet_by_soc_from_snapshot_or_empty
     from career_advisor.data.cn_samples import load_sample_cn_occupations
     from career_advisor.data.cn_enricher import enrich as enrich_cn
+    from career_advisor.data.seed_loader import load_occupations
 
     print("\n" + "=" * 60)
     print("=== 演示：中国职业库骨架 ===")
     print("=" * 60)
 
+    all_occs = load_occupations()  # 这里已经包含了 910 O*NET + 5 大典
+    
+    # 提取 O*NET 用于单独展示
+    onet_by_soc = {}
+    for o in all_occs:
+        soc = (o.taxonomy_refs or {}).get("onet_soc_2018", {}).get("soc_code")
+        if soc:
+            onet_by_soc[soc] = o
+            
     cn_occs = load_sample_cn_occupations()
-    onet_by_soc = _onet_by_soc_from_snapshot_or_empty()
     enriched = enrich_cn(cn_occs, onet_by_soc)
 
     print(f"\n大典样本: {len(cn_occs)} 条")
     print(f"O*NET 快照可用于 enrichment: {len(onet_by_soc)} 条 SOC")
+    
     for o in enriched:
         has_skill = "有技能" if o.skill_vector else "仅骨架"
         flags = ",".join(o.data_quality_flags)

@@ -267,6 +267,7 @@ def _build_allowed_numbers(inp: dict) -> set[str]:
     m = inp["match"]
     allowed.add(_normalize_number(str(m["total_score"])))
     allowed.add(str(m["rank"]))
+    allowed.add("10")  # <--- 新增这一行，放行 "未来 10 年" 这种常识性常量
     for s in m["sub_scores"].values():
         for f in ("raw", "weight_effective", "contribution"):
             if s.get(f) is not None:
