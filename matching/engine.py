@@ -7,18 +7,28 @@ from ..models import (UserProfile, Occupation, Prospect, RankedItem,
 from .config import ScoringConfig
 from . import hard_filter, scorers, diversity
 
+from ..models import (UserProfile, Occupation, Prospect, RankedItem,
+                      RankedMatchResult, ExcludedCandidate,
+                      EvidenceValue, MATCH_WHITELISTED_INDICATORS)
+from ..region_scope import regions_to_scope, is_observation_eligible
 
-def index_static_observations(prospects: list[Prospect]) -> dict[str, dict[str, float | None]]:
-    """按 (occ_id) 聚合白名单观测指标。多记录时按
-    (data_year_or_horizon DESC, source_priority ASC) 取第一条。
-    本实现暂以 data_year_or_horizon 字符串降序近似（as_of_2024 > as_of_2023）。"""
+def index_static_observations(
+        prospects: list[Prospect],
+        user_scopes: set[str] | None = None) -> dict[str, dict[str, float | None]]:
+    """按 occupation_id 聚合白名单观测指标。
+
+    user_scopes 为 None 时不做地区检查（向后兼容）；
+    传入 set 时，与用户地域不兼容的观测被过滤。
+    多记录时按 (data_year_or_horizon DESC, source_name ASC) 取第一条。
+    """
     index: dict[str, dict[str, float | None]] = {}
-    # 白名单断言：任何非白名单记录直接丢弃，不降级使用
-    valid = []
+    valid: list[Prospect] = []
     for p in prospects:
         if p.indicator_type not in MATCH_WHITELISTED_INDICATORS:
             continue
         if not p.data_year_or_horizon.startswith("as_of_"):
+            continue
+        if user_scopes is not None and not is_observation_eligible(p.region, user_scopes):
             continue
         valid.append(p)
     valid.sort(key=lambda p: (p.occupation_id, p.indicator_type,
@@ -27,8 +37,7 @@ def index_static_observations(prospects: list[Prospect]) -> dict[str, dict[str, 
         slot = index.setdefault(p.occupation_id, {})
         slot.setdefault(p.indicator_type, p.indicator_value)
     return index
-
-
+    
 def has_minimum_signal(profile: UserProfile, cfg: ScoringConfig) -> bool:
     dims = sum(1 for ev in profile.interests_riasec.values() if ev.value is not None)
     return dims >= cfg.interest_min_available_dims or len(profile.skills) >= 2
@@ -48,7 +57,10 @@ def match(profile: UserProfile, occupations: list[Occupation],
             ranked_items=[], excluded_candidates=[], diversity_report={},
             missing_fields=profile.missing_fields)
 
-    static_index = index_static_observations(prospects)
+    # 地区准入：从用户画像解析国别范围，过滤不兼容的静态观测
+    region_ev = profile.hard_constraints.get("region", EvidenceValue.missing())
+    user_scopes = regions_to_scope(region_ev.value if region_ev.value else None)
+    static_index = index_static_observations(prospects, user_scopes)
 
     candidates, excluded = [], []
     for occ in occupations:
@@ -77,7 +89,8 @@ def match(profile: UserProfile, occupations: list[Occupation],
             "values":         scorers.score_values(profile, occ,
                                                    static_index.get(occ.occupation_id, {}), cfg),
         }
-        eff = _renormalize_weights(cfg.dimension_weights, {k: v.available for k, v in subs.items()})
+        eff = _renormalize_weights(cfg.dimension_weights,
+                                    {k: v.available for k, v in subs.items()})
         subs_final = {}
         for k, s in subs.items():
             w = eff[k]
@@ -117,7 +130,6 @@ def match(profile: UserProfile, occupations: list[Occupation],
         ranked_items=selected, excluded_candidates=excluded,
         diversity_report=report)
 
-
 def _renormalize_weights(configured: dict[str, float], available: dict[str, bool]) -> dict[str, float]:
     avail = [k for k, a in available.items() if a]
     if not avail:
@@ -139,3 +151,66 @@ def _hash_profile(profile: UserProfile) -> str:
     return "sha256:" + hashlib.sha256(
         json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
     ).hexdigest()
+    
+
+def rerun_with_preferences(
+        profile: UserProfile,
+        new_weights: dict[str, float | None],
+        occupations: list[Occupation],
+        prospects: list[Prospect],
+        cfg: ScoringConfig,
+        occupation_snapshot_id: str = "occ-snapshot-v1",
+) -> tuple[UserProfile, RankedMatchResult]:
+    """P7 偏好调节：只修改 values_weights，其余字段原样，重跑 L2。
+
+    参数
+    ----
+    new_weights : dict[str, float | None]
+        - value=None  → 该维度标记为 missing
+        - 未出现的键 → 保持原值
+    occupation_snapshot_id 与上次匹配相同，保证可复现。
+
+    返回
+    ----
+    (new_profile, new_result)。new_profile 是副本；原 profile 完全不变。
+
+    契约
+    ----
+    - 只改 values_weights，不触碰硬约束、兴趣、技能、排除项
+    - 每次重跑基于原 profile，不叠加历史调节
+    - 相同 profile + 相同 new_weights → 逐字段相同的 new_result
+    """
+    new_profile = _copy_profile(profile)
+    for k, v in new_weights.items():
+        pointer = f"/values_weights/{k}"
+        if v is None:
+            new_profile.values_weights[k] = EvidenceValue.missing()
+        else:
+            new_profile.values_weights[k] = EvidenceValue(
+                value=v,
+                evidence="用户通过偏好调节设置",
+                confidence="explicit",
+            )
+        new_profile.field_status[pointer] = "user_corrected"
+        if pointer in new_profile.missing_fields:
+            new_profile.missing_fields.remove(pointer)
+
+    new_result = match(new_profile, occupations, prospects, cfg,
+                       occupation_snapshot_id=occupation_snapshot_id)
+    return new_profile, new_result
+
+
+def _copy_profile(profile: UserProfile) -> UserProfile:
+    """深拷贝到新 UserProfile，避免改到原始对象。
+    EvidenceValue 本身不会被修改，浅拷贝容器即可。"""
+    return UserProfile(
+        profile_id=profile.profile_id,
+        hard_constraints=dict(profile.hard_constraints),
+        interests_riasec=dict(profile.interests_riasec),
+        skills=list(profile.skills),
+        values_weights=dict(profile.values_weights),
+        work_style_preferences=dict(profile.work_style_preferences),
+        exclusions=list(profile.exclusions),
+        field_status=dict(profile.field_status),
+        missing_fields=list(profile.missing_fields),
+    )    

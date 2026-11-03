@@ -12,6 +12,7 @@ from career_advisor.explanation.generator import StubExplanationGenerator
 from career_advisor.explanation.validator import validate
 from career_advisor.profile.extractor import StubProfileExtractor
 from career_advisor.data.seed_loader import snapshot_exists as _snapshot_exists
+from career_advisor.region_scope import regions_to_scope
 
 def make_demo_profile() -> UserProfile:
     return UserProfile(
@@ -282,8 +283,107 @@ def run_education_gate_demo():
         print(f"  {e.occupation_id}: {e.reason_code} — {e.reason_detail}")
 
 
+def run_region_admission_demo():
+    """演示地区准入：US 观测对中国用户不可用。"""
+    import copy
+    print("\n" + "=" * 60)
+    print("=== 演示：地区准入 ===")
+    print("=" * 60)
+
+    occupations = load_seed_occupations()
+    prospects = make_demo_prospects()          # 全部 US 来源
+    cfg = ScoringConfig()
+
+    profile_cn = make_demo_profile()           # region=["杭州"]
+    profile_us = copy.deepcopy(profile_cn)
+    profile_us.hard_constraints["region"] = EvidenceValue(
+        ["纽约"], "演示：美国用户", "explicit")
+
+    for label, p in [("中国用户 region=[杭州] → scopes={CN}", profile_cn),
+                     ("美国用户 region=[纽约] → scopes={US}", profile_us)]:
+        result = match(p, occupations, prospects, cfg)
+        sw = next((i for i in result.ranked_items
+                   if i.occupation_id == "CN-2022-2-02-10-08"), None)
+        print(f"\n{label}")
+        if sw is None:
+            print("  软件工程师未进入 Top-N")
+            continue
+        vals = sw.sub_scores["values"]
+        status = "[不可用]" if not vals.available else ""
+        print(f"  软件工程师 values: raw={vals.raw}  {status}")
+        print(f"    detail: {vals.detail}")
+        print(f"  总分: {sw.total_score}")
+
+
+def run_preference_adjuster_demo():
+    """演示 P7 偏好调节：只改 values_weights，展示排名变化。"""
+    import copy
+    from career_advisor.matching.engine import rerun_with_preferences
+    from career_advisor.interaction.preference_adjuster import diff_rankings
+
+    print("\n" + "=" * 60)
+    print("=== 演示：P7 偏好调节 ===")
+    print("=" * 60)
+
+    occupations = load_seed_occupations()
+    prospects = make_demo_prospects()
+    cfg = ScoringConfig()
+
+    # 用美国用户，让 values 分可用（US 观测与 US 地域兼容）
+    base_profile = make_demo_profile()
+    base_profile.hard_constraints["region"] = EvidenceValue(
+        ["纽约"], "演示：美国用户", "explicit")
+    # 补一个 autonomy 权重，让调节有可观察的效果
+    base_profile.values_weights["autonomy"] = EvidenceValue(
+        0.3, "演示", "explicit")
+
+    base_result = match(base_profile, occupations, prospects, cfg)
+    print("\n[基准 Top-N]")
+    for i in base_result.ranked_items:
+        print(f"  [{i.rank}] {i.occupation_name:12s}  {i.total_score}")
+
+    # 用户把 values_weights 从 {salary:0.5, stability:0.8, autonomy:0.3}
+    # 调整为 {salary:0.1, stability:0.9, autonomy:0.5}
+    new_weights = {"salary": 0.1, "stability": 0.9, "autonomy": 0.5}
+    new_profile, new_result = rerun_with_preferences(
+        base_profile, new_weights, occupations, prospects, cfg)
+
+    print(f"\n[调节后 salary={new_weights['salary']}, "
+          f"stability={new_weights['stability']}, "
+          f"autonomy={new_weights['autonomy']}]")
+    for i in new_result.ranked_items:
+        print(f"  [{i.rank}] {i.occupation_name:12s}  {i.total_score}")
+
+    diff = diff_rankings(base_result, new_result)
+    print(f"\n[diff] {diff['summary']}")
+    for e in diff["moved_up"]:
+        print(f"  ↑ {e['occupation_name']}: 第 {e['old_rank']} → 第 {e['new_rank']} 名")
+    for e in diff["moved_down"]:
+        print(f"  ↓ {e['occupation_name']}: 第 {e['old_rank']} → 第 {e['new_rank']} 名")
+    for e in diff["new_entries"]:
+        print(f"  + {e['occupation_name']} 进入第 {e['new_rank']} 名")
+    for e in diff["dropped"]:
+        print(f"  - {e['occupation_name']} 移出（原第 {e['old_rank']} 名）")
+
+    # 新增说明
+    if diff["summary"]["unchanged_count"] == len(base_result.ranked_items):
+        print("  说明：本 demo 中 values 组件值恰好相同（salary 分桶与 autonomy 归一化"
+              "均为 0.75），权重调整不改变加权平均。rerun_with_preferences 的可复现性"
+              "与 diff 计算已由 tests/test_rerun.py 覆盖；如需演示 non-trivial 排名变化，"
+              "需换一份种子数据。")
+              
+    # 断言：原 profile 不变
+    assert base_profile.values_weights["salary"].value == 0.5, \
+        "原 profile 不应被修改"
+    assert new_profile.values_weights["salary"].value == 0.1, \
+        "新 profile 应反映调节"
+    print("\n✓ 原 profile 未被修改，新 profile 反映调节")
+    
+
 if __name__ == "__main__":
     run_demo()
     run_insufficient_demo()
     run_full_interaction_demo()
     run_education_gate_demo()
+    run_region_admission_demo()        # 新增
+    run_preference_adjuster_demo()     # 新增    
