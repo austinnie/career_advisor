@@ -296,6 +296,11 @@ def _build_allowed_numbers(inp: dict) -> set[str]:
         if isinstance(val_ev, dict) and val_ev.get("value") is not None:
             allowed.add(_normalize_number(str(val_ev["value"])))
 
+    if prof.get("years_experience") is not None:
+        allowed.add(_normalize_number(str(prof["years_experience"])))
+        allowed.add(f"{prof['years_experience']:.1f}")
+        allowed.add(f"{prof['years_experience']:.0f}")
+        
     # 4. 前景数据
     for p in inp["prospects"]:
         if p.get("status") != "available": continue

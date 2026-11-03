@@ -41,6 +41,7 @@ def _project_profile(profile: UserProfile) -> dict:
     """只投影有 evidence 的字段。"""
     return {
         "skills_with_evidence": profile.skills,
+        "years_experience": profile.years_experience,
         "riasec_with_evidence": {k: {"value": v.value, "evidence": v.evidence}
                                  for k, v in profile.interests_riasec.items()
                                  if v.value is not None and v.evidence},
