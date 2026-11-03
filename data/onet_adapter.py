@@ -1,16 +1,7 @@
-"""O*NET 职业适配器。从 O*NET 数据库 txt 文件构建 Occupation 记录。
-
-数据文件下载：https://www.onetcenter.org/database.html
-所需文件（放入同一目录）：
-  occupation_data.txt, skills.txt, interests.txt,
-  work_context.txt, job_zones.txt
-可选文件：
-  education.txt, task_statements.txt
-
-本适配器不贡献 Prospect（O*NET 无 10 年期就业预测）。
-字段缺失一律为 None；不填默认值。
-"""
+"""O*NET 职业适配器。兼容 O*NET 31.0 格式，合并 Essential 与 Software Skills。"""
 from __future__ import annotations
+import csv
+import io
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,7 +11,6 @@ from .adapters import DataSourceAdapter, RawPayload, SourceCategory
 from .family_mapping import (family_for_soc, onet_importance_to_1_5,
                               onet_cx_to_0_100, onet_oi_to_0_100,
                               ONET_CRITICAL_THRESHOLD_1_5)
-
 
 _RIASEC_LABELS = {
     "Realistic": "R", "Investigative": "I", "Artistic": "A",
@@ -33,249 +23,185 @@ _WORK_CONTEXT_KEYS = {
     "Freedom to Make Decisions":           ("job_autonomy", "autonomy"),
 }
 
-_REQUIRED_FILES = ["occupation_data.txt", "skills.txt", "interests.txt",
-                   "work_context.txt", "job_zones.txt"]
+# 必需文件（software_skills 为非必需，存在则读取）
+_REQUIRED_BASES = ["occupation_data", "essential_skills", "career_interest_types", "work_context", "job_zones"]
 
 
 class ONetOccupationAdapter(DataSourceAdapter):
-    source_id = "ONET-30.x"
+    source_id = "ONET-31.0"
     source_category = SourceCategory.TAXONOMY
     expected_refresh_days = 90
 
     def fetch(self, onet_dir: str, **params) -> RawPayload:
         onet_path = Path(onet_dir)
-        missing = [f for f in _REQUIRED_FILES if not (onet_path / f).exists()]
+        missing = []
+        resolved_paths = {}
+        
+        for base in _REQUIRED_BASES + ["software_skills", "education"]:
+            found = None
+            for ext in [".csv", ".txt"]:
+                p = onet_path / f"{base}{ext}"
+                if p.exists():
+                    found = p
+                    break
+            if found:
+                resolved_paths[base] = found
+            elif base in _REQUIRED_BASES:
+                missing.append(base)
+
         if missing:
-            raise FileNotFoundError(
-                f"O*NET required files missing in {onet_dir}: {missing}. "
-                f"Download from https://www.onetcenter.org/database.html")
-        # 只保留路径，不读入内存；解析在 normalize_occupations 中逐文件进行
+            raise FileNotFoundError(f"O*NET required files missing in {onet_dir}: {missing}")
+
         return RawPayload(
             source_id=self.source_id,
             retrieved_at=datetime.now(timezone.utc),
             source_url_or_file=str(onet_path.resolve()),
-            content={"dir": str(onet_path)},
+            content={"dir": str(onet_path), "paths": resolved_paths},
             content_type="onet_directory",
         )
 
     def normalize_prospects(self, payload: RawPayload) -> list:
-        return []  # O*NET 不贡献 Prospect
+        return []
 
     def normalize_occupations(self, payload: RawPayload) -> list[Occupation]:
-        root = Path(payload.content["dir"])
+        paths = payload.content["paths"]
 
-        occupations = _parse_tsv(root / "occupation_data.txt",
-                                 required_cols=["O*NET-SOC Code", "Title"])
-        interests = _parse_interests(root / "interests.txt")
-        skills = _parse_skills(root / "skills.txt")
-        work_context = _parse_work_context(root / "work_context.txt")
-        job_zones = _parse_kv(root / "job_zones.txt", "O*NET-SOC Code", "Job Zone")
-        education = (_parse_education(root / "education.txt")
-                     if (root / "education.txt").exists() else {})
+        occupations = _parse_tsv(paths["occupation_data"], required_cols=["O*NET-SOC Code", "Title"])
+        interests = _parse_interests(paths["career_interest_types"])
+        
+        # 合并 Essential Skills 和 Software Skills
+        skills = _parse_skills(paths["essential_skills"])
+        if "software_skills" in paths:
+            software_skills = _parse_skills(paths["software_skills"])
+            for soc, sw_list in software_skills.items():
+                skills.setdefault(soc, []).extend(sw_list)
+
+        work_context = _parse_work_context(paths["work_context"])
+        job_zones = _parse_kv(paths["job_zones"], "O*NET-SOC Code", "Job Zone")
+        
+        education = {}
+        if "education" in paths:
+            education = _parse_education(paths["education"])
 
         results: list[Occupation] = []
         for soc, info in occupations.items():
             skill_list = skills.get(soc, [])
             if not skill_list:
-                continue                       # 无技能 → 不进匹配空间
+                continue
             family = family_for_soc(soc)
             if family is None:
-                continue                       # 未映射的 major group → 跳过
-            data_level = soc.endswith(".00") or soc.endswith(".01")
-
-            riasec = interests.get(soc)
+                continue
+            
             results.append(Occupation(
                 occupation_id=f"ONET-{soc}",
                 preferred_name=info["title"],
                 occupation_family=family,
-                taxonomy_refs={"onet_soc_2018": {"soc_code": soc,
-                                                 "data_level": data_level}},
-                riasec_profile=riasec,
+                taxonomy_refs={"onet_soc_2018": {"soc_code": soc, "data_level": True}},
+                riasec_profile=interests.get(soc),
                 skill_vector=skill_list,
                 typical_requirements={
                     "entry_education": education.get(soc),
                     "job_zone": job_zones.get(soc),
-                    "work_experience": None,     # O*NET 此字段在独立文件；暂不解析
                 },
                 work_context=work_context.get(soc),
-                entry_barriers={
-                    "license_required": "unknown",  # O*NET 无执照字段；不做推断
-                    "license_note": None,
-                },
-                data_quality_flags=[] if riasec and work_context.get(soc) else [
-                    flag for flag in
-                    (["no_riasec"] if not riasec else [])
-                    + (["no_work_context"] if not work_context.get(soc) else [])
-                ],
+                entry_barriers={"license_required": "unknown", "license_note": None},
             ))
         return results
 
-
 # ============ 内部解析器 ============
 
-def _open_tsv(path: Path):
-    return path.read_text(encoding="utf-8", errors="replace").splitlines()
-
+def _read_delimited(path: Path) -> list[dict]:
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
+    first_line = text.splitlines()[0] if text else ""
+    delimiter = "\t" if "\t" in first_line else ","
+    reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
+    return list(reader)
 
 def _parse_tsv(path: Path, required_cols: list[str]) -> dict[str, dict]:
-    lines = _open_tsv(path)
-    header = lines[0].split("\t")
-    missing = [c for c in required_cols if c not in header]
-    if missing:
-        raise ValueError(f"{path.name} missing columns: {missing}")
-    idx = {c: header.index(c) for c in required_cols}
+    rows = _read_delimited(path)
+    if not rows: return {}
     out: dict[str, dict] = {}
-    for line in lines[1:]:
-        if not line.strip():
-            continue
-        parts = line.split("\t")
-        soc = parts[idx["O*NET-SOC Code"]].strip()
-        if not soc:
-            continue
-        out[soc] = {"title": parts[idx["Title"]].strip()}
+    for row in rows:
+        soc = (row.get("O*NET-SOC Code") or "").strip()
+        if not soc: continue
+        out[soc] = {"title": (row.get("Title") or "").strip()}
     return out
-
 
 def _parse_interests(path: Path) -> dict[str, dict[str, float]]:
-    lines = _open_tsv(path)
-    header = lines[0].split("\t")
-    i_soc = header.index("O*NET-SOC Code")
-    i_elem = header.index("Element Name")
-    i_scale = header.index("Scale ID")
-    i_val = header.index("Data Value")
+    rows = _read_delimited(path)
     out: dict[str, dict[str, float]] = {}
-    for line in lines[1:]:
-        if not line.strip():
-            continue
-        p = line.split("\t")
-        if p[i_scale].strip() != "OI":
-            continue
-        dim = _RIASEC_LABELS.get(p[i_elem].strip())
-        if not dim:
-            continue
-        try:
-            score = onet_oi_to_0_100(float(p[i_val]))
-        except ValueError:
-            continue
-        out.setdefault(p[i_soc].strip(), {})[dim] = round(score, 2)
+    for row in rows:
+        if row.get("Scale ID", "").strip() != "OI": continue
+        dim = _RIASEC_LABELS.get(row.get("Element Name", "").strip())
+        if not dim: continue
+        try: score = onet_oi_to_0_100(float(row.get("Data Value", "")))
+        except (ValueError, TypeError): continue
+        out.setdefault(row.get("O*NET-SOC Code", "").strip(), {})[dim] = round(score, 2)
     return out
 
-
 def _parse_skills(path: Path) -> dict[str, list[dict]]:
-    lines = _open_tsv(path)
-    header = lines[0].split("\t")
-    i_soc = header.index("O*NET-SOC Code")
-    i_elem_id = header.index("Element ID")
-    i_elem_name = header.index("Element Name")
-    i_scale = header.index("Scale ID")
-    i_val = header.index("Data Value")
+    rows = _read_delimited(path)
     out: dict[str, list[dict]] = {}
-    for line in lines[1:]:
-        if not line.strip():
-            continue
-        p = line.split("\t")
-        if p[i_scale].strip() != "IM":
-            continue
-        try:
-            raw = float(p[i_val])
-        except ValueError:
-            continue
+    for row in rows:
+        if row.get("Scale ID", "").strip() not in ("IM", "LV"): continue
+        # 只取 IM (Importance) 避免重复
+        if row.get("Scale ID", "").strip() != "IM": continue
+        
+        try: raw = float(row.get("Data Value", ""))
+        except (ValueError, TypeError): continue
+        
+        # Software Skills 没有 Importance，通常固定为 3.0 或 5.0
+        if "Software Skills" in path.name or "software_skills" in path.name:
+            raw = 5.0
+            
         importance = round(onet_importance_to_1_5(raw), 2)
-        skill_name = p[i_elem_name].strip()
-        element_id = p[i_elem_id].strip()
+        skill_name = row.get("Element Name", "").strip()
         skill_id = _normalize_skill_id(skill_name)
-        if not skill_id:
-            continue
-        out.setdefault(p[i_soc].strip(), []).append({
+        if not skill_id: continue
+        
+        out.setdefault(row.get("O*NET-SOC Code", "").strip(), []).append({
             "skill_id": skill_id,
-            "element_id": element_id,
             "importance": importance,
             "critical": importance >= ONET_CRITICAL_THRESHOLD_1_5,
-            "provenance_original_name": skill_name,
         })
     return out
 
 def _parse_work_context(path: Path) -> dict[str, dict]:
-    lines = _open_tsv(path)
-    header = lines[0].split("\t")
-    i_soc = header.index("O*NET-SOC Code")
-    i_elem = header.index("Element Name")
-    i_scale = header.index("Scale ID")
-    i_val = header.index("Data Value")
+    rows = _read_delimited(path)
     out: dict[str, dict] = {}
-    for line in lines[1:]:
-        if not line.strip():
-            continue
-        p = line.split("\t")
-        if p[i_scale].strip() != "CX":
-            continue
-        elem = p[i_elem].strip()
-        spec = _WORK_CONTEXT_KEYS.get(elem)
-        if spec is None:
-            continue
+    for row in rows:
+        if row.get("Scale ID", "").strip() != "CX": continue
+        spec = _WORK_CONTEXT_KEYS.get(row.get("Element Name", "").strip())
+        if not spec: continue
         key, _ = spec
-        try:
-            v = onet_cx_to_0_100(float(p[i_val]))
-        except ValueError:
-            continue
-        out.setdefault(p[i_soc].strip(), {})[key] = round(v, 2)
+        try: v = onet_cx_to_0_100(float(row.get("Data Value", "")))
+        except (ValueError, TypeError): continue
+        out.setdefault(row.get("O*NET-SOC Code", "").strip(), {})[key] = round(v, 2)
     return out
-
 
 def _parse_kv(path: Path, key_col: str, val_col: str) -> dict[str, str]:
-    lines = _open_tsv(path)
-    header = lines[0].split("\t")
-    if key_col not in header or val_col not in header:
-        return {}
-    ik, iv = header.index(key_col), header.index(val_col)
+    rows = _read_delimited(path)
     out: dict[str, str] = {}
-    for line in lines[1:]:
-        if not line.strip():
-            continue
-        p = line.split("\t")
-        k, v = p[ik].strip(), p[iv].strip()
-        if k and v:
-            out[k] = v
+    for row in rows:
+        k, v = (row.get(key_col) or "").strip(), (row.get(val_col) or "").strip()
+        if k and v: out[k] = v
     return out
-
 
 def _parse_education(path: Path) -> dict[str, str]:
-    """O*NET education.txt 有 Element Name 列（如 'Bachelor's Degree'），
-    以及 Scale ID='RL' 的必需等级。取 Element Name 作为 entry_education。"""
-    lines = _open_tsv(path)
-    header = lines[0].split("\t")
-    i_soc = header.index("O*NET-SOC Code")
-    i_elem = header.index("Element Name")
-    i_scale = header.index("Scale ID")
+    rows = _read_delimited(path)
     out: dict[str, str] = {}
-    for line in lines[1:]:
-        if not line.strip():
-            continue
-        p = line.split("\t")
-        if p[i_scale].strip() != "RL":
-            continue
-        soc = p[i_soc].strip()
-        level = p[i_elem].strip()
+    for row in rows:
+        if row.get("Scale ID", "").strip() != "RL": continue
+        soc = (row.get("O*NET-SOC Code") or "").strip()
         if soc and soc not in out:
-            out[soc] = _normalize_education_level(level)
+            level = (row.get("Element Name") or "").strip().lower()
+            if "doctoral" in level or "post-doctoral" in level: out[soc] = "phd"
+            elif "master" in level: out[soc] = "master"
+            elif "bachelor" in level: out[soc] = "bachelor"
+            elif "associate" in level: out[soc] = "associate"
+            elif "high school" in level: out[soc] = "high_school"
+            else: out[soc] = "unknown"
     return out
 
-
-def _normalize_education_level(onet_label: str) -> str:
-    label = onet_label.lower()
-    if "doctoral" in label or "post-doctoral" in label:
-        return "phd"
-    if "master" in label:
-        return "master"
-    if "bachelor" in label or "post-baccalaureate" in label:
-        return "bachelor"
-    if "associate" in label:
-        return "associate"
-    if "high school" in label or "less than high school" in label:
-        return "high_school"
-    return "unknown"
-
-
 def _normalize_skill_id(name: str) -> str:
-    s = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
-    return s
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
