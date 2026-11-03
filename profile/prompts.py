@@ -8,25 +8,29 @@ L1_SYSTEM_PROMPT = """你是画像抽取器。你不做任何推断、补全或�
    - value 非空时，evidence 必须是 raw_text 中的**精确子串（保持原语言）**。
    - 若 raw_text 中没有支撑该字段的原文，value=null，evidence=null，confidence=null。
 2. **地域提取**：如果用户提到了现居城市、期望工作地（如 "现居：日本广岛"、"想在东京工作"），必须提取到 /hard_constraints/region。
-3. 无论原文本是什么语言，内部字段的值必须标准化为**英文枚举**：
+3. **工作年限提取**：如果用户提到了总工作年限（如 "19年嵌入式经验"、"5 years of experience"），请提取到 /years_experience（浮点数）。
+4. 无论原文本是什么语言，内部字段的值必须标准化为**英文枚举**：
    - `education_level` 必须为 "high_school" | "associate" | "bachelor" | "master" | "phd"
    - `proficiency` 必须为 "beginner" | "intermediate" | "advanced" | "expert"
-4. **技能映射极其重要**：`skill_id` 必须映射到 O*NET 的**宽泛标准技能**（宽泛的 Element Name），**绝对不要自己发明过于细分的词汇**！
+5. **技能映射极其重要**：`skill_id` 必须映射到 O*NET 的**宽泛标准技能**。
    - 例如：遇到 "C/C++/Java"，使用 "programming" 或 "computers_and_electronics"。
    - 遇到 "Linux内核开发"，使用 "programming" 或 "operating_systems" 或 "troubleshooting"。
    - 遇到 "自动化脚本/Python"，使用 "programming"。
    - 遇到 "跨团队沟通/客户对接"，使用 "communication" 或 "coordination"。
-5. 禁止从常识推断。例如用户说「我做客服」，不得据此填 RIASEC 的 S 或 E，除非用户原文明说。
-6. 禁止修改或改写 raw_text 中的任何数字。
-7. missing_fields 必须列出所有仍为 null 的 JSON Pointer。
-8. 如果用户提到了「希望稳定」「不想冒险」「求安稳」「stable」等诉求，必须在 /values_weights/stability 中给出 0.5 到 1.0 之间的值。
+   - **软技能**：如果用户提到"解决疑难问题/排查故障"，提取 "complex_problem_solving" 或 "critical_thinking"。
+   - **软技能**：如果用户提到"学习新技术/快速上手"，提取 "active_learning"。
+6. 禁止从常识推断。
+7. 禁止修改或改写 raw_text 中的任何数字。
+8. missing_fields 必须列出所有仍为 null 的 JSON Pointer。
+9. 如果用户提到了「希望稳定」「不想冒险」「求安稳」等诉求，必须在 /values_weights/stability 中给出 0.5 到 1.0 之间的值。
 """
 
 L1_USER_TEMPLATE = """# raw_text
 {raw_text}
 
 # 待抽取字段（必须全部出现在输出中，无证据的字段填 null）
-- /hard_constraints/region （现居地或期望工作地，string[]，如 ["广岛"] 或 ["日本"]）
+- /years_experience （总工作年限，number，若无则 null）
+- /hard_constraints/region （现居地或期望工作地，string[]）
 - /hard_constraints/max_education_investment_years （可接受的学历投入年限上限，number）
 - /hard_constraints/economic_pressure_period （"immediate" | "within_1y" | "flexible"）
 - /hard_constraints/license_obtainable （是否愿意/能够获取执照，boolean）
@@ -37,15 +41,16 @@ L1_USER_TEMPLATE = """# raw_text
 - /work_style_preferences/indoor_outdoor /team_independent /travel_tolerance
 - /exclusions （[{{"type": "...", "value": "...", "source_span": "..."}}]）
 
-# 输出结构（必须严格遵循以下 JSON 格式，不要包含 Markdown 格式的 ```json 代码块）
+# 输出结构
 {{
-  "hard_constraints": {{ "region": {{"value":..., "evidence":..., "confidence":...}}, ... }},
-  "interests_riasec": {{ "R": {{...}}, "I": {{...}}, "A": {{...}}, "S": {{...}}, "E": {{...}}, "C": {{...}} }},
+  "years_experience": 19.0,
+  "hard_constraints": {{ ... }},
+  "interests_riasec": {{ ... }},
   "skills": [{{"skill_id":"...", "proficiency":"...", "evidence":"...", "source_span":"..."}}],
-  "values_weights": {{ "salary": {{...}}, "stability": {{...}}, "growth": {{...}}, "autonomy": {{...}}, "social_impact": {{...}} }},
-  "work_style_preferences": {{ "indoor_outdoor": {{...}}, "team_independent": {{...}}, "travel_tolerance": {{...}} }},
-  "exclusions": [{{"type":"...", "value":"...", "source_span":"..."}}],
-  "missing_fields": ["/interests_riasec/E", ...]
+  "values_weights": {{ ... }},
+  "work_style_preferences": {{ ... }},
+  "exclusions": [ ... ],
+  "missing_fields": [ ... ]
 }}"""
 
 
