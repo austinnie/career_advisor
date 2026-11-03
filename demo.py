@@ -156,7 +156,134 @@ def run_insufficient_demo():
         print(f"  - {f}")
     print(f"  ... 共 {len(result.missing_fields)} 项")
 
+ANSWER_VALUES = {
+    "T_RIASEC_OPEN": {
+        "/interests_riasec/I": 70,
+        "/interests_riasec/C": 65,
+        "/interests_riasec/S": 55,
+    },
+    "T_SKILL_OPEN": {
+        "/skills": [
+            {"skill_id": "spreadsheet_excel", "proficiency": "intermediate",
+             "evidence": "self_report", "source_span": "演示输入"},
+        ],
+    },
+    "T_EDU_YEARS": {"/hard_constraints/max_education_investment_years": 0},
+    "T_LICENSE":   {"/hard_constraints/license_obtainable": True},
+    "T_REGION":    {"/hard_constraints/region": ["杭州"]},
+    "T_ECON":      {"/hard_constraints/economic_pressure_period": "within_1y"},
+    "T_VALUES":    {"/values_weights/salary": 0.7,
+                    "/values_weights/stability": 0.8},
+    "T_WORKSTYLE": {"/work_style_preferences/indoor_outdoor": "indoor"},
+}
+
+def run_full_interaction_demo():
+    """完整链路：L1 → P2 修正 → P3 追问 → L2 → L4 → P6 查询。"""
+    from career_advisor.interaction.state_machine import ClarifyStateMachine
+    from career_advisor.interaction.profile_review import ProfileReviewer
+    from career_advisor.interaction.excluded_query import (
+        group_excluded, diversity_rejected, lookup_occupation)
+
+    print("\n" + "=" * 60)
+    print("=== 演示：完整交互链路 ===")
+    print("=" * 60)
+
+    # 1. L1 Stub
+    profile = StubProfileExtractor().extract("我想找个工作。")
+    print(f"\n[L1] 抽取出 {len(profile.missing_fields)} 个缺失字段")
+
+    # 2. P2 修正：模拟用户在抽取结果确认页补充一个字段
+    reviewer = ProfileReviewer(profile)
+    # 实际场景：用户发现 L1 没抽到某字段，主动修正/补充
+    print(f"[P2] 用户未做修正")
+
+    # 3. P3 追问：3 轮
+    sm = ClarifyStateMachine(reviewer.finalize()).start()
+    round_no = 1
+    while not sm.is_done() and round_no <= 3:
+        qs = sm.current_questions()
+        if not qs:
+            break
+        print(f"\n[P3·第 {round_no} 轮] 追问 {len(qs)} 个问题：")
+        for q in qs:
+            print(f"  Q({q.template_id}): {q.question_text}")
+            print(f"     输入类型: {q.input_type}  选项: {q.options or '无'}")
+            print(f"     提示: 跳过将标记为『你未提供』")
+
+        # 只回答本轮第一个；其余跳过
+        first = qs[0]
+        answer = ANSWER_VALUES.get(first.template_id)
+        if answer is not None:
+            sm.answer(first.template_id, answer)
+            print(f"  → 用户回答 {first.template_id}: {answer}")
+        else:
+            sm.skip(first.template_id)
+            print(f"  → 用户跳过 {first.template_id}（无预设答案）")
+
+        for q in qs[1:]:
+            sm.skip(q.template_id)
+            print(f"  → 用户跳过 {q.template_id}")
+        round_no += 1
+
+    final_profile = sm.session.profile
+    print(f"\n[P3 汇总] 已回答/跳过记录: {len(sm.session.history)} 条")
+    print(f"[P3 汇总] 字段状态分布: ", end="")
+    from collections import Counter
+    print(dict(Counter(final_profile.field_status.values())))
+
+    # 4. L2 匹配
+    occupations = load_seed_occupations()
+    prospects = make_demo_prospects()
+    cfg = ScoringConfig()
+    result = match(final_profile, occupations, prospects, cfg)
+    print(f"\n[L2] 状态: {result.status}，Top-N: {len(result.ranked_items)}")
+
+    # 5. P6 查询
+    print(f"\n[P6] 被排除职业（按原因分组）:")
+    for code, items in group_excluded(result).items():
+        print(f"  {code}:")
+        for item in items:
+            print(f"    - {item['occupation_id']}: {item['label']} — {item['detail']}")
+
+    div = diversity_rejected(result)
+    if div:
+        print(f"\n[P6] 因多样性约束挤出:")
+        for d in div:
+            print(f"  - {d['occupation_id']} ({d['occupation_family']}) 分 {d['total_score']}")
+
+    print(f"\n[P6] 未收录职业查询「脱口秀演员」:")
+    print(f"  {lookup_occupation('脱口秀演员', occupations)}")
+
+
+def run_education_gate_demo():
+    """演示修复后的学历硬门槛：用户 bachelor + 投入上限 0 年，
+    遇 master 要求的职业应被硬过滤。"""
+    from career_advisor.models import Occupation
+
+    profile = make_demo_profile()
+    # 构造一个要求 master 的合成职业
+    master_occ = Occupation(
+        occupation_id="TEST-MASTER-REQ",
+        preferred_name="算法研究员（测试用）",
+        occupation_family="科学研究",
+        riasec_profile={"R": 30, "I": 95, "A": 40, "S": 30, "E": 40, "C": 70},
+        skill_vector=[{"skill_id": "statistics", "importance": 5, "critical": True}],
+        typical_requirements={"entry_education": "master", "job_zone": 5},
+        entry_barriers={"license_required": False},
+    )
+    profile.hard_constraints["max_education_investment_years"] = \
+        EvidenceValue(0, "不想再读书", "explicit")
+
+    result = match(profile, [master_occ], [], ScoringConfig())
+    print(f"\n=== 演示：学历硬门槛 ===")
+    print(f"用户 education_level=bachelor, max_education_investment_years=0")
+    print(f"职业要求: master")
+    for e in result.excluded_candidates:
+        print(f"  {e.occupation_id}: {e.reason_code} — {e.reason_detail}")
+
 
 if __name__ == "__main__":
     run_demo()
     run_insufficient_demo()
+    run_full_interaction_demo()
+    run_education_gate_demo()
