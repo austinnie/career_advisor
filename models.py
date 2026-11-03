@@ -103,6 +103,7 @@ class EvidenceValue:
 @dataclass
 class UserProfile:
     profile_id: str
+    years_experience: float | None = None  # <--- 新增，默认 None
     hard_constraints: dict[str, EvidenceValue] = field(default_factory=dict)
     # hard_constraints 的键为：
     #   "region" | "max_education_investment_years" | "economic_pressure_period"
