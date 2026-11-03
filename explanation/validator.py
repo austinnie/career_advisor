@@ -7,6 +7,7 @@ FORBIDDEN_PHRASES = ["前景广阔", "未来可期", "大有可为", "朝阳行�
                      "前景无限", "钱途", "高薪保障", "包就业"]
 
 ALLOWED_ENTRY_PATH_REFS = {
+    "occupation.typical_requirements",
     "occupation.typical_requirements.entry_education",
     "occupation.typical_requirements.work_experience",
     "occupation.typical_requirements.job_zone",
@@ -268,13 +269,34 @@ def _build_allowed_numbers(inp: dict) -> set[str]:
     m = inp["match"]
     allowed.add(_normalize_number(str(m["total_score"])))
     allowed.add(str(m["rank"]))
-    allowed.add("10")  # <--- 新增这一行，放行 "未来 10 年" 这种常识性常量
+    allowed.add("10")
+    
+    # 1. 匹配分数
     for s in m["sub_scores"].values():
         for f in ("raw", "weight_effective", "contribution"):
             if s.get(f) is not None:
                 allowed.add(_normalize_number(str(s[f])))
     if m.get("penalties", {}).get("total") is not None:
         allowed.add(_normalize_number(str(m["penalties"]["total"])))
+        
+    # 2. 职业的 RIASEC 分数
+    occ = inp.get("occupation", {})
+    if occ.get("riasec_profile"):
+        for v in occ["riasec_profile"].values():
+            if v is not None:
+                allowed.add(_normalize_number(str(v)))
+                
+    # 3. 用户画像中的 RIASEC 和 价值观权重
+    prof = inp.get("profile", {})
+    for riasec_ev in prof.get("riasec_with_evidence", {}).values():
+        if isinstance(riasec_ev, dict) and riasec_ev.get("value") is not None:
+            allowed.add(_normalize_number(str(riasec_ev["value"])))
+            
+    for val_ev in prof.get("values_with_evidence", {}).values():
+        if isinstance(val_ev, dict) and val_ev.get("value") is not None:
+            allowed.add(_normalize_number(str(val_ev["value"])))
+
+    # 4. 前景数据
     for p in inp["prospects"]:
         if p.get("status") != "available": continue
         if p.get("indicator_value") is not None:
@@ -282,4 +304,5 @@ def _build_allowed_numbers(inp: dict) -> set[str]:
         allowed.add(str(p.get("publication_year")))
         for y in re.findall(r"\d{4}", p.get("data_year_or_horizon", "") or ""):
             allowed.add(y)
+            
     return allowed
