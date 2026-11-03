@@ -142,7 +142,10 @@ def _payload_to_profile(payload: dict) -> UserProfile:
         work_style_preferences={k: _safe_ev(v) for k, v in ws.items()},
         exclusions=[e for e in (payload.get("exclusions") or [])
                     if isinstance(e, dict) and e.get("source_span")],
-        missing_fields=sorted(payload.get("missing_fields") or []),
+        missing_fields=sorted([
+            f for f in (payload.get("missing_fields") or []) 
+            if not f.startswith("/exclusions")
+        ]),
     )
 
 
