@@ -24,20 +24,17 @@ L1_USER_TEMPLATE = """# raw_text
 - /hard_constraints/max_education_investment_years （可接受的学历投入年限上限，number）
 - /hard_constraints/economic_pressure_period （"immediate" | "within_1y" | "flexible"）
 - /hard_constraints/license_obtainable （是否愿意/能够获取执照，boolean）
+- /hard_constraints/education_level （最高已获得学历，取值 ∈ "high_school" | "associate" | "bachelor" | "master" | "phd"）
 - /interests_riasec/R /I /A /S /E /C （0-100）
-- /skills （[{skill_id, proficiency, evidence, source_span}]；
+- /skills （[{{"skill_id": "...", "proficiency": "...", "evidence": "...", "source_span": "..."}}]；
            proficiency ∈ beginner|intermediate|advanced|expert；
-           skill_id 需映射到标准技能词表）
+           skill_id 需映射到标准技能词表，如 "programming", "spreadsheet_software"）
 - /values_weights/salary /stability /growth /autonomy /social_impact （0-1）
 - /work_style_preferences/indoor_outdoor /team_independent /travel_tolerance
-- /exclusions （[{type, value, source_span}]；
+- /exclusions （[{{"type": "...", "value": "...", "source_span": "..."}}]；
               type ∈ occupation_family|work_context|region|occupation）
-- /hard_constraints/education_level （最高已获得学历）
-   取值 ∈ "high_school" | "associate" | "bachelor" | "master" | "phd"
-   证据必须为原文中明确表达学历的片段（如「本科」「硕士在读」「大专」）；
-   未提及则 value=null。              
 
-# 输出结构
+# 输出结构（必须严格遵循以下 JSON 格式，不要包含 Markdown 格式的 ```json 代码块）
 {{
   "hard_constraints": {{ "region": {{"value":..., "evidence":..., "confidence":...}}, ... }},
   "interests_riasec": {{ "R": {{...}}, "I": {{...}}, "A": {{...}}, "S": {{...}}, "E": {{...}}, "C": {{...}} }},

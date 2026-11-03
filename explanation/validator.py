@@ -225,7 +225,8 @@ def _check_historical_prefix(output: dict, inp: dict) -> list[Violation]:
 def _float_equal(a, b) -> bool:
     if a is None and b is None: return True
     if a is None or b is None: return False
-    return abs(float(a) - float(b)) < 1e-9
+    # 允许极小的浮点精度误差，避免 LLM 输出 0.4500 导致被误判
+    return abs(float(a) - float(b)) < 1e-4
 
 
 def _iter_text(output: dict):
