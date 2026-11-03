@@ -15,6 +15,10 @@ from career_advisor.data.seed_loader import snapshot_exists as _snapshot_exists
 from career_advisor.region_scope import regions_to_scope
 from career_advisor.data.skill_adjacency import SkillAdjacency
 
+from career_advisor.config import get_default_llm_client
+from career_advisor.profile.extractor import LLMProfileExtractor
+from career_advisor.explanation.generator import LLMExplanationGenerator
+
 def make_demo_profile() -> UserProfile:
     return UserProfile(
         profile_id="demo-1",
@@ -515,6 +519,66 @@ def run_cn_library_demo():
     print(f"  仅骨架: {cov['excluded_count']}")
     print(f"  说明: {cov['sampling_note']}")
 
+def run_real_llm_demo():
+    """使用真实 LLM 跑通从原始文本到解释报告的全流程。"""
+    print("\n" + "=" * 60)
+    print("=== 演示：真实 LLM 驱动的全链路 ===")
+    print("=" * 60)
+
+    raw_text = (
+        "我今年30岁，本科读的是汉语言文学，毕业后做了6年行政助理。"
+        "工作里经常用 Excel 做数据报表，也帮部门对接过供应商，沟通协调比较多。"
+        "现在想转行，希望工作稳定一点，不想太冒险。目前在杭州，暂时不想离开。"
+        "薪资没特别要求，能覆盖生活就行。"
+    )
+    print(f"\n[输入文本]\n{raw_text}\n")
+
+    try:
+        client = get_default_llm_client()
+        
+        # 1. L1 抽取
+        print("[L1] 正在调用 LLM 抽取画像...")
+        extractor = LLMProfileExtractor(client)
+        profile = extractor.extract(raw_text)
+        print(f"  -> 抽取完成。仍有 {len(profile.missing_fields)} 个缺失字段。")
+        
+        # 2. 跑匹配
+        occupations = load_seed_occupations()
+        prospects = make_demo_prospects()
+        result = match(profile, occupations, prospects, ScoringConfig())
+        
+        if result.status == "ok" and result.ranked_items:
+            top = result.ranked_items[0]
+            print(f"\n[L2] 匹配成功。Top-1 职业: {top.occupation_name}")
+            
+            # 3. L4 解释
+            print(f"\n[L4] 正在调用 LLM 生成解释报告...")
+            occ = next(o for o in occupations if o.occupation_id == top.occupation_id)
+            occ_prospects = [p for p in prospects if p.occupation_id == occ.occupation_id]
+            
+            from career_advisor.explanation.input_builder import build_explanation_input
+            exp_input = build_explanation_input(
+                top, occ, profile, occ_prospects, {}, 
+                {"no_data_phrase": "暂无可靠数据", "no_trend_phrase": "暂无趋势判断"}
+            )
+            
+            generator = LLMExplanationGenerator(client)
+            output = generator.generate(exp_input)
+            
+            # 4. 校验
+            from career_advisor.explanation.validator import validate
+            violations = validate(output, exp_input)
+            
+            if not violations:
+                print("  -> 生成成功且通过校验！")
+                print(f"\n【匹配结论·推断】\n{output['match_conclusion']['why_match']['text']}")
+                print(f"\n【未来10年·事实】\n{output['prospect_10y']['facts']['text']}")
+            else:
+                print(f"  -> 校验失败，已自动降级。违规项: {violations}")
+                
+    except Exception as e:
+        print(f"运行失败: {e}")
+        
 if __name__ == "__main__":
     run_demo()
     run_insufficient_demo()
@@ -524,3 +588,4 @@ if __name__ == "__main__":
     run_preference_adjuster_demo()     # 新增    
     run_skill_neighbor_demo()      # 新增
     run_cn_library_demo()
+    run_real_llm_demo()

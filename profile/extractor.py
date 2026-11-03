@@ -38,8 +38,11 @@ class LLMProfileExtractor(ProfileExtractor):
         payload = self.client.generate_json(
             system_prompt=L1_SYSTEM_PROMPT,
             user_prompt=L1_USER_TEMPLATE.format(raw_text=raw_text),
-            schema=_USER_PROFILE_SCHEMA,
+            schema={},
         )
+        import json
+        print(f"\n[DEBUG-L1] 原始返回:\n{json.dumps(payload, ensure_ascii=False, indent=2)}\n") # <--- 加这行
+        
         profile = _payload_to_profile(payload)
         return validate_and_downgrade(profile)
 
