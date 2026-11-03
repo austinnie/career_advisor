@@ -106,8 +106,7 @@ def match(profile: UserProfile, occupations: list[Occupation],
             cfg.missing_critical_beta * (
                 len(missing_crit) / max(1, len(occ.skill_vector or []))), 8)
         total_penalty = round(ev.soft_penalty + mc_penalty, 8)
-        total = round(sum(s.contribution for s in subs_final.values()) - total_penalty,
-                      cfg.score_precision)
+        total = round(max(0.0, sum(s.contribution for s in subs_final.values()) - total_penalty), cfg.score_precision)
 
         ranked.append(RankedItem(
             rank=0, occupation_id=occ.occupation_id,
