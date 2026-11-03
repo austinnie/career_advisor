@@ -19,6 +19,7 @@ L1_SYSTEM_PROMPT = """你是画像抽取器。你不做任何推断、补全或�
    - 遇到 "跨团队沟通/客户对接"，使用 "communication" 或 "coordination"。
    - **软技能**：如果用户提到"解决疑难问题/排查故障"，提取 "complex_problem_solving" 或 "critical_thinking"。
    - **软技能**：如果用户提到"学习新技术/快速上手"，提取 "active_learning"。
+   **注意：简历可能非常长，你最多只能提取 8 个最核心的技能。不要罗列所有细枝末节的技术。**   
 6. 禁止从常识推断。
 7. 禁止修改或改写 raw_text 中的任何数字。
 8. missing_fields 必须列出所有仍为 null 的 JSON Pointer。

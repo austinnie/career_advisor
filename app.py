@@ -81,7 +81,13 @@ if st.button("🚀 开始匹配", type="primary"):
                     st.error("画像信息不足，无法匹配。请补充更多信息。")
                 else:
                     st.subheader("🎯 Top 职业推荐")
-                    
+
+                    # 检查画像是否偏科
+                    missing_riasec = all(v.value is None for v in profile.interests_riasec.values())
+                    missing_values = all(v.value is None for v in profile.values_weights.values())
+                    if missing_riasec and missing_values:
+                        st.warning("⚠️ **提示**：系统未能从简历中提取到您的**职业兴趣**和**价值观偏好**。当前的排名仅根据您的技能背景推算，可能不够准确。建议您在文本末尾补充一句：*“我期望找一份薪资高、有技术挑战、且稳定的工作。”*")
+                        
                     # 取前 3 名展示
                     for item in result.ranked_items[:3]:
                         with st.container(border=True):

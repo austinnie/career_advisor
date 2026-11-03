@@ -41,9 +41,39 @@ class LLMProfileExtractor(ProfileExtractor):
             schema={},
         )
         import json
-        print(f"\n[DEBUG-L1] 原始返回:\n{json.dumps(payload, ensure_ascii=False, indent=2)}\n") # <--- 加这行
+        print(f"\n[DEBUG-L1] 原始返回:\n{json.dumps(payload, ensure_ascii=False, indent=2)}\n")
         
         profile = _payload_to_profile(payload)
+        
+        # ============ 正则兜底机制 ============
+        import re
+        # 1. 兜底学历
+        if profile.hard_constraints.get("education_level", EvidenceValue.missing()).value is None:
+            if re.search(r"(本科|学士|Bachelor)", raw_text, re.IGNORECASE):
+                profile.hard_constraints["education_level"] = EvidenceValue("bachelor", "正则兜底匹配", "inferred")
+            elif re.search(r"(硕士|Master)", raw_text, re.IGNORECASE):
+                profile.hard_constraints["education_level"] = EvidenceValue("master", "正则兜底匹配", "inferred")
+            elif re.search(r"(博士|PhD|Doctor)", raw_text, re.IGNORECASE):
+                profile.hard_constraints["education_level"] = EvidenceValue("phd", "正则兜底匹配", "inferred")
+
+        # 2. 兜底地域
+        if profile.hard_constraints.get("region", EvidenceValue.missing()).value is None:
+            if re.search(r"日本|东京|大阪|广岛|Tokyo|Osaka", raw_text):
+                profile.hard_constraints["region"] = EvidenceValue(["日本"], "正则兜底匹配", "inferred")
+            elif re.search(r"北京|上海|广州|深圳|杭州", raw_text):
+                cities = re.findall(r"(北京|上海|广州|深圳|杭州)", raw_text)
+                profile.hard_constraints["region"] = EvidenceValue(list(set(cities)), "正则兜底匹配", "inferred")
+
+        # 3. 兜底工作年限
+        if profile.years_experience is None:
+            year_match = re.search(r"(\d+)\s*年", raw_text)
+            if year_match:
+                try:
+                    profile.years_experience = float(year_match.group(1))
+                except ValueError:
+                    pass
+        # ====================================
+
         return validate_and_downgrade(profile)
 
     def _extract_incremental(self, raw_text: str, prior: UserProfile,
