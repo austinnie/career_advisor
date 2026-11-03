@@ -1,5 +1,8 @@
-"""种子职业库。仅供演示/测试，非生产数据。occupation_family 取自受控的 20 族列表。"""
+"""兼容层：load_seed_occupations() 委托给 seed_loader.load_occupations()。
+实际数据来源由 seed_loader 决定（快照优先 / 手工回退）。"""
+from __future__ import annotations
 from ..models import Occupation
+from .seed_loader import load_occupations as _load
 
 
 FAMILIES = [
@@ -10,8 +13,10 @@ FAMILIES = [
     "市场营销与公关", "体育与休闲", "旅游与酒店", "其他专业服务",
 ]
 
-
 def load_seed_occupations() -> list[Occupation]:
+    return _load()
+    
+def _hand_seeded_data() -> list[Occupation]:
     return [
         Occupation(
             occupation_id="CN-2022-2-02-10-08",
