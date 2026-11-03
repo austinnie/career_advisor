@@ -47,3 +47,5 @@ data/db_31_0_csv/
 data/db_31_0_csv.zip
 *.zip
 data/snapshots/
+
+.env
