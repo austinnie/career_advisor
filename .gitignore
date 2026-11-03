@@ -43,3 +43,7 @@ logs/
 # 真实下载的原始数据（体积大、许可需单独核实）
 data/raw/
 data/db_31_0_csv/
+
+data/db_31_0_csv.zip
+*.zip
+data/snapshots/
