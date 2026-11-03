@@ -47,6 +47,7 @@ class Occupation:
     typical_requirements: Optional[dict] = None
     work_context: Optional[dict] = None
     entry_barriers: Optional[dict] = None                # {"license_required": bool|"unknown"}
+    core_tasks: Optional[list[dict]] = None              # [{task_id, task_statement, source}]
     data_quality_flags: list[str] = field(default_factory=list)
 
 
