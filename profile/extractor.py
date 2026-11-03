@@ -10,6 +10,44 @@ from .prompts import (L1_SYSTEM_PROMPT, L1_USER_TEMPLATE,
                       L1_INCREMENTAL_SYSTEM_PROMPT, L1_INCREMENTAL_USER_TEMPLATE)
 
 
+import re
+
+def _preprocess_resume(raw_text: str) -> str:
+    """对超长简历进行脱水。
+    保留头部（个人信息/核心优势）、教育资格模块，截断中间冗长的项目细节。
+    如果总长度小于 3000 字，则原样返回。
+    """
+    if len(raw_text) < 3000:
+        return raw_text
+
+    # 1. 提取头部（通常是个人信息、联系方式、核心优势）
+    head = raw_text[:800]
+
+    # 2. 提取教育与资格模块（通常是简历的最后一部分）
+    edu_keywords = ["教育", "学历", "资格", "语言", "Education", "Qualifications"]
+    edu_idx = -1
+    for kw in edu_keywords:
+        idx = raw_text.rfind(kw)
+        if idx != -1 and idx > len(raw_text) // 2: # 确保在简历后半部分
+            edu_idx = idx
+            break
+            
+    tail = ""
+    if edu_idx != -1:
+        tail = raw_text[edu_idx:edu_idx+800]
+        
+    # 3. 提取中段的关键工作经历标题（保留前两份工作的前 300 字）
+    # 简单粗暴法：头部 + 工作经历的开头部分 + 尾部
+    mid = raw_text[800:1800]
+    
+    compressed = (
+        f"【简历头部/核心摘要】\n{head}\n\n"
+        f"【近期工作经历（节选）】\n{mid}\n\n"
+        f"【教育背景与资格】\n{tail}\n\n"
+        f"【系统提示：原简历过长已压缩，请重点提取上述模块中的信息】"
+    )
+    return compressed
+    
 class LLMClient(Protocol):
     def generate_json(self, system_prompt: str, user_prompt: str, schema: dict) -> dict:
         ...
@@ -35,9 +73,13 @@ class LLMProfileExtractor(ProfileExtractor):
         return self._extract_full(raw_text)
 
     def _extract_full(self, raw_text: str) -> UserProfile:
+
+        # 1. 先脱水！
+        compressed_text = _preprocess_resume(raw_text)
+        
         payload = self.client.generate_json(
             system_prompt=L1_SYSTEM_PROMPT,
-            user_prompt=L1_USER_TEMPLATE.format(raw_text=raw_text),
+            user_prompt=L1_USER_TEMPLATE.format(raw_text=compressed_text), # 使用压缩后的文本
             schema={},
         )
         import json
