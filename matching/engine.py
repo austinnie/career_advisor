@@ -45,7 +45,8 @@ def has_minimum_signal(profile: UserProfile, cfg: ScoringConfig) -> bool:
 
 def match(profile: UserProfile, occupations: list[Occupation],
           prospects: list[Prospect], cfg: ScoringConfig,
-          occupation_snapshot_id: str = "occ-snapshot-v1") -> RankedMatchResult:
+          occupation_snapshot_id: str = "occ-snapshot-v1",
+          skill_adjacency=None) -> RankedMatchResult:
     cfg_hash = cfg.hash()
     profile_hash = _hash_profile(profile)
 
@@ -57,7 +58,6 @@ def match(profile: UserProfile, occupations: list[Occupation],
             ranked_items=[], excluded_candidates=[], diversity_report={},
             missing_fields=profile.missing_fields)
 
-    # 地区准入：从用户画像解析国别范围，过滤不兼容的静态观测
     region_ev = profile.hard_constraints.get("region", EvidenceValue.missing())
     user_scopes = regions_to_scope(region_ev.value if region_ev.value else None)
     static_index = index_static_observations(prospects, user_scopes)
@@ -85,9 +85,11 @@ def match(profile: UserProfile, occupations: list[Occupation],
     for occ, ev in candidates:
         subs = {
             "interest":       scorers.score_interest(profile, occ, cfg),
-            "skill_transfer": scorers.score_skill_transfer(profile, occ, cfg),
+            "skill_transfer": scorers.score_skill_transfer(
+                profile, occ, cfg, adjacency=skill_adjacency),
             "values":         scorers.score_values(profile, occ,
-                                                   static_index.get(occ.occupation_id, {}), cfg),
+                                                   static_index.get(occ.occupation_id, {}),
+                                                   cfg),
         }
         eff = _renormalize_weights(cfg.dimension_weights,
                                     {k: v.available for k, v in subs.items()})
@@ -114,7 +116,8 @@ def match(profile: UserProfile, occupations: list[Occupation],
             total_score=total, sub_scores=subs_final,
             penalties_total=total_penalty,
             hard_constraint_eval=list(ev.evals),
-            matched_skills=subs["skill_transfer"].detail.get("matched", []),
+            matched_skills=subs["skill_transfer"].detail.get("matched", [])
+                            + subs["skill_transfer"].detail.get("neighbor_matched", []),
             unmatched_critical_skills=missing_crit))
 
     ranked.sort(key=lambda r: (-r.total_score, r.occupation_id))
@@ -129,7 +132,7 @@ def match(profile: UserProfile, occupations: list[Occupation],
         occupation_snapshot_id=occupation_snapshot_id,
         ranked_items=selected, excluded_candidates=excluded,
         diversity_report=report)
-
+        
 def _renormalize_weights(configured: dict[str, float], available: dict[str, bool]) -> dict[str, float]:
     avail = [k for k, a in available.items() if a]
     if not avail:
@@ -160,26 +163,8 @@ def rerun_with_preferences(
         prospects: list[Prospect],
         cfg: ScoringConfig,
         occupation_snapshot_id: str = "occ-snapshot-v1",
+        skill_adjacency=None,
 ) -> tuple[UserProfile, RankedMatchResult]:
-    """P7 偏好调节：只修改 values_weights，其余字段原样，重跑 L2。
-
-    参数
-    ----
-    new_weights : dict[str, float | None]
-        - value=None  → 该维度标记为 missing
-        - 未出现的键 → 保持原值
-    occupation_snapshot_id 与上次匹配相同，保证可复现。
-
-    返回
-    ----
-    (new_profile, new_result)。new_profile 是副本；原 profile 完全不变。
-
-    契约
-    ----
-    - 只改 values_weights，不触碰硬约束、兴趣、技能、排除项
-    - 每次重跑基于原 profile，不叠加历史调节
-    - 相同 profile + 相同 new_weights → 逐字段相同的 new_result
-    """
     new_profile = _copy_profile(profile)
     for k, v in new_weights.items():
         pointer = f"/values_weights/{k}"
@@ -187,19 +172,16 @@ def rerun_with_preferences(
             new_profile.values_weights[k] = EvidenceValue.missing()
         else:
             new_profile.values_weights[k] = EvidenceValue(
-                value=v,
-                evidence="用户通过偏好调节设置",
-                confidence="explicit",
-            )
+                value=v, evidence="用户通过偏好调节设置", confidence="explicit")
         new_profile.field_status[pointer] = "user_corrected"
         if pointer in new_profile.missing_fields:
             new_profile.missing_fields.remove(pointer)
 
     new_result = match(new_profile, occupations, prospects, cfg,
-                       occupation_snapshot_id=occupation_snapshot_id)
+                       occupation_snapshot_id=occupation_snapshot_id,
+                       skill_adjacency=skill_adjacency)
     return new_profile, new_result
-
-
+    
 def _copy_profile(profile: UserProfile) -> UserProfile:
     """深拷贝到新 UserProfile，避免改到原始对象。
     EvidenceValue 本身不会被修改，浅拷贝容器即可。"""

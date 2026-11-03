@@ -13,6 +13,7 @@ from career_advisor.explanation.validator import validate
 from career_advisor.profile.extractor import StubProfileExtractor
 from career_advisor.data.seed_loader import snapshot_exists as _snapshot_exists
 from career_advisor.region_scope import regions_to_scope
+from career_advisor.data.skill_adjacency import SkillAdjacency
 
 def make_demo_profile() -> UserProfile:
     return UserProfile(
@@ -283,6 +284,86 @@ def run_education_gate_demo():
         print(f"  {e.occupation_id}: {e.reason_code} — {e.reason_detail}")
 
 
+def _inline_demo_adjacency() -> SkillAdjacency:
+    """demo 用的小邻接表。生产环境应从 O*NET skills.txt 构建
+    （见 data/skill_adjacency.build_adjacency_from_onet）。"""
+    return SkillAdjacency(
+        version="demo-v1",
+        source="inline",
+        adjacency={
+            "programming": frozenset({"technology_design", "operations_analysis",
+                                       "troubleshooting", "quality_control_analysis"}),
+            "technology_design": frozenset({"programming", "operations_analysis"}),
+            "operations_analysis": frozenset({"programming", "technology_design"}),
+            "critical_thinking": frozenset({"active_learning", "learning_strategies",
+                                             "monitoring"}),
+            "active_learning": frozenset({"critical_thinking", "learning_strategies"}),
+        },
+    )
+
+
+def run_skill_neighbor_demo():
+    """演示技能邻居匹配：无 adjacency 时不命中，有 adjacency 时部分命中。"""
+    from career_advisor.matching.scorers import score_skill_transfer
+    from career_advisor.models import Occupation
+
+    print("\n" + "=" * 60)
+    print("=== 演示：技能邻居匹配 ===")
+    print("=" * 60)
+
+    occ = Occupation(
+        occupation_id="TEST-SKILL", preferred_name="测试职业",
+        occupation_family="工程与制造",
+        skill_vector=[
+            {"skill_id": "programming", "importance": 5, "critical": True},
+            {"skill_id": "operations_analysis", "importance": 3, "critical": False},
+        ],
+        typical_requirements={},
+        entry_barriers={"license_required": False},
+    )
+
+    def _mk_profile(skills):
+        from career_advisor.models import UserProfile
+        return UserProfile(
+            profile_id="t", hard_constraints={}, interests_riasec={},
+            skills=[{"skill_id": sid, "proficiency": prof,
+                     "evidence": "work_experience", "source_span": "..."}
+                    for sid, prof in skills],
+            values_weights={}, work_style_preferences={}, exclusions=[],
+            field_status={}, missing_fields=[],
+        )
+
+    profile_tech = _mk_profile([("technology_design", "advanced")])
+    profile_prog = _mk_profile([("programming", "advanced")])
+    cfg = ScoringConfig()
+    adj = _inline_demo_adjacency()
+
+    no_adj = score_skill_transfer(profile_tech, occ, cfg, adjacency=None)
+    with_adj = score_skill_transfer(profile_tech, occ, cfg, adjacency=adj)
+    exact = score_skill_transfer(profile_prog, occ, cfg, adjacency=adj)
+
+    print(f"\n[职业要求] programming (imp=5, critical), operations_analysis (imp=3)")
+    print(f"\n[用户技能: technology_design, 无邻接表]")
+    print(f"  raw={no_adj.raw}  matched={no_adj.detail['matched']}")
+    print(f"  neighbor_matched={no_adj.detail['neighbor_matched']}")
+    print(f"  unmatched_critical={no_adj.detail['unmatched_critical']}")
+
+    print(f"\n[用户技能: technology_design, 有邻接表]")
+    print(f"  raw={with_adj.raw}  matched={with_adj.detail['matched']}")
+    print(f"  neighbor_matched={with_adj.detail['neighbor_matched']}")
+    print(f"  unmatched_critical={with_adj.detail['unmatched_critical']}")
+
+    print(f"\n[用户技能: programming (精确匹配), 有邻接表]")
+    print(f"  raw={exact.raw}  matched={exact.detail['matched']}")
+    print(f"  neighbor_matched={exact.detail['neighbor_matched']}")
+
+    print(f"\n说明:")
+    print(f"  - 无邻接表时，technology_design 完全不能帮上 programming")
+    print(f"  - 有邻接表时，technology_design 作为 programming 的邻居，按")
+    print(f"    skill_neighbor_match_factor={cfg.skill_neighbor_match_factor} 折算")
+    print(f"  - operations_analysis 用户无任何直接或邻居技能，仍不能匹配")
+    print(f"  - 邻接表从 O*NET Element ID 层级构建，非人工编造")
+    
 def run_region_admission_demo():
     """演示地区准入：US 观测对中国用户不可用。"""
     import copy
@@ -387,3 +468,4 @@ if __name__ == "__main__":
     run_education_gate_demo()
     run_region_admission_demo()        # 新增
     run_preference_adjuster_demo()     # 新增    
+    run_skill_neighbor_demo()      # 新增

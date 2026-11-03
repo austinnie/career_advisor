@@ -165,6 +165,7 @@ def _parse_skills(path: Path) -> dict[str, list[dict]]:
     lines = _open_tsv(path)
     header = lines[0].split("\t")
     i_soc = header.index("O*NET-SOC Code")
+    i_elem_id = header.index("Element ID")
     i_elem_name = header.index("Element Name")
     i_scale = header.index("Scale ID")
     i_val = header.index("Data Value")
@@ -181,17 +182,18 @@ def _parse_skills(path: Path) -> dict[str, list[dict]]:
             continue
         importance = round(onet_importance_to_1_5(raw), 2)
         skill_name = p[i_elem_name].strip()
+        element_id = p[i_elem_id].strip()
         skill_id = _normalize_skill_id(skill_name)
         if not skill_id:
             continue
         out.setdefault(p[i_soc].strip(), []).append({
             "skill_id": skill_id,
+            "element_id": element_id,
             "importance": importance,
             "critical": importance >= ONET_CRITICAL_THRESHOLD_1_5,
             "provenance_original_name": skill_name,
         })
     return out
-
 
 def _parse_work_context(path: Path) -> dict[str, dict]:
     lines = _open_tsv(path)

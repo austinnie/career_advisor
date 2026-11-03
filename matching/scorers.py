@@ -4,7 +4,12 @@ import math
 from ..models import Occupation, UserProfile, SubScore
 from .config import ScoringConfig
 
+from typing import Protocol
 
+
+class _AdjacencyProtocol(Protocol):
+    def neighbors(self, skill_id: str) -> frozenset[str]: ...
+    
 def score_interest(profile: UserProfile, occ: Occupation, cfg: ScoringConfig) -> SubScore:
     available = {d: ev.value for d, ev in profile.interests_riasec.items()
                  if ev.value is not None}
@@ -22,15 +27,17 @@ def score_interest(profile: UserProfile, occ: Occupation, cfg: ScoringConfig) ->
                     available=True,
                     detail={"dims_used": dims, "cosine": round(cos, 6)})
 
-
-def score_skill_transfer(profile: UserProfile, occ: Occupation, cfg: ScoringConfig) -> SubScore:
+def score_skill_transfer(profile: UserProfile, occ: Occupation,
+                          cfg: ScoringConfig,
+                          adjacency: "_AdjacencyProtocol | None" = None) -> SubScore:
     if not occ.skill_vector:
         return SubScore(raw=None, weight_effective=0.0, contribution=0.0,
                         available=False, detail={"reason": "no_skill_vector"})
     user_map = {s["skill_id"]: s for s in profile.skills}
     total_w = sum(r["importance"] for r in occ.skill_vector) or 1
     raw = 0.0
-    matched, unmatched_critical = [], []
+    matched, neighbor_matched, unmatched_critical = [], [], []
+
     for r in occ.skill_vector:
         w = r["importance"] / total_w
         sid = r["skill_id"]
@@ -39,12 +46,48 @@ def score_skill_transfer(profile: UserProfile, occ: Occupation, cfg: ScoringConf
             cov = cfg.skill_exact_match_factor * cfg.skill_proficiency_factors.get(prof, 0.4)
             matched.append(sid)
             raw += w * cov
-        elif r.get("critical") and r["importance"] >= cfg.skill_critical_importance_threshold:
+            continue
+
+        # 邻居匹配（仅在传入 adjacency 时生效）
+        best_neighbor_prof = None
+        if adjacency is not None:
+            best_neighbor_prof = _best_neighbor_proficiency(user_map, sid, adjacency)
+
+        if best_neighbor_prof is not None:
+            cov = (cfg.skill_neighbor_match_factor
+                   * cfg.skill_proficiency_factors.get(best_neighbor_prof, 0.4))
+            neighbor_matched.append(f"{sid}(neighbor)")
+            raw += w * cov
+        elif (r.get("critical")
+              and r["importance"] >= cfg.skill_critical_importance_threshold):
             unmatched_critical.append(sid)
+
     return SubScore(raw=round(raw, 6), weight_effective=0.0, contribution=0.0,
                     available=True,
-                    detail={"matched": matched, "unmatched_critical": unmatched_critical})
+                    detail={"matched": matched,
+                            "neighbor_matched": neighbor_matched,
+                            "unmatched_critical": unmatched_critical})
 
+
+def _best_neighbor_proficiency(user_map: dict, target_skill: str,
+                                adjacency: "_AdjacencyProtocol") -> str | None:
+    """在职业技能的邻居中寻找用户已具备的技能，返回最高熟练度。
+    未命中返回 None。"""
+    neighbors = adjacency.neighbors(target_skill)
+    if not neighbors:
+        return None
+    rank = {"beginner": 0, "intermediate": 1, "advanced": 2, "expert": 3}
+    best_rank = -1
+    best_prof = None
+    for sid, skill in user_map.items():
+        if sid in neighbors:
+            prof = skill.get("proficiency", "beginner")
+            r = rank.get(prof, 0)
+            if r > best_rank:
+                best_rank = r
+                best_prof = prof
+    return best_prof
+    
 
 def score_values(profile: UserProfile, occ: Occupation,
                  static_obs: dict[str, float | None], cfg: ScoringConfig) -> SubScore:

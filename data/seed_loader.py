@@ -7,12 +7,14 @@ from pathlib import Path
 
 from ..models import Occupation
 from .onet_adapter import ONetOccupationAdapter
-
+from .skill_adjacency import (SkillAdjacency, build_adjacency_from_onet,
+                               save_adjacency, load_adjacency)
 
 logger = logging.getLogger(__name__)
 
 
 SNAPSHOT_PATH = Path(__file__).parent / "snapshots" / "occupations.json"
+SKILLS_ADJACENCY_PATH = Path(__file__).parent / "snapshots" / "skills_adjacency.json"
 
 def snapshot_exists() -> bool:
     """供 demo / 交互层判断当前使用的是快照还是手工回退数据。"""
@@ -60,6 +62,16 @@ def build_snapshot(onet_dir: str, output_path: Path | None = None,
     stats = {"parsed": len(occupations), "kept": len(filtered),
              "path": str(target)}
     logger.info("Snapshot built: %s", stats)
+
+    # 同步构建技能邻接表
+    try:
+        adjacency = build_adjacency_from_onet(Path(onet_dir))
+        save_adjacency(adjacency, SKILLS_ADJACENCY_PATH)
+        stats["adjacency_skill_count"] = len(adjacency.adjacency)
+    except FileNotFoundError:
+        logger.warning("skills.txt not available; skipping adjacency build")
+        stats["adjacency_skill_count"] = 0
+        
     return stats
 
 
@@ -67,3 +79,8 @@ def _load_hand_seeded() -> list[Occupation]:
     # 原有 5 条手工种子，原样保留
     from .seeds import _hand_seeded_data
     return _hand_seeded_data()
+
+def load_skill_adjacency() -> SkillAdjacency | None:
+    """加载技能邻接表。不存在时返回 None（调用方退化为精确匹配）。"""
+    return load_adjacency(SKILLS_ADJACENCY_PATH)
+    
