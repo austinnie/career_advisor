@@ -109,6 +109,7 @@ class LLMExplanationGenerator(ExplanationGenerator):
                         "text": inf_text,
                         "derivation_chain": ["occupation.core_tasks"]
                     }
+                    # 👇 强制写死预测，绝对不让模型编造
                     output["prospect_10y"]["prediction"] = {
                         "tag": "预测", 
                         "text": "暂无外部机构对该职业的 10 年期预测。", 

@@ -18,10 +18,11 @@ L1_SYSTEM_PROMPT = """你是画像抽取器。你不做任何推断、补全或�
    - `education_level` 必须为 "high_school" | "associate" | "bachelor" | "master" | "phd"
    - `proficiency` 必须为 "beginner" | "intermediate" | "advanced" | "expert"
 5. **技能映射与降噪（极度重要）**：`skill_id` 必须映射到 O*NET 的**宽泛标准技能**。
-   - **绝对不要罗列长篇技术清单！** 你最多只能提取 **6 到 8 个最宏观、最具代表性的技能**。
-   - 例如遇到 "精通 ARM/MIPS/x86，解决内核死锁、OOM、内存泄漏"，你只需提取 "programming"、"operating_systems"、"troubleshooting" 和 "complex_problem_solving"。
-   - 遇到 "跨团队沟通/客户对接/统筹中日欧团队"，提取 "communication" 或 "coordination"。
-   - 遇到 "自动化脚本/Python/CI/CD"，提取 "programming" 或 "active_learning"。
+   - **绝对不要罗列长篇技术清单！** 你最多只能提取 **10 个最核心的技能**。
+   - 例如遇到 "精通 C/C++/ARM，解决内核死锁、OOM、Jffs2跳变"，你不仅提取 "programming"、"operating_systems"、"troubleshooting"，**还必须提取高级软技能** "complex_problem_solving" 和 "critical_thinking"。
+   - 遇到 "跨团队沟通/客户对接/统筹中日欧团队"，提取 "communication" 和 "coordination"。
+   - 遇到 "自动化脚本/CI/CD"，提取 "programming" 或 "active_learning"。
+   - 遇到 "带团队/主导专项/负责交付"，提取 "management_of_personnel_resources" 或 "judgment_and_decision_making"。
 6. 禁止从常识推断。
 7. 禁止修改或改写 raw_text 中的任何数字。
 8. missing_fields 必须列出所有仍为 null 的 JSON Pointer。

@@ -18,7 +18,7 @@ class ScoringConfig:
     skill_proficiency_factors: dict[str, float] = field(
         default_factory=lambda: {"beginner": 0.4, "intermediate": 0.7,
                                  "advanced": 0.9, "expert": 1.0})
-    missing_critical_beta: float = 0.15
+    missing_critical_beta: float = 0.05
     license_unknown_soft_penalty: float = 0.05
     education_unknown_soft_penalty: float = 0.03
     economic_pressure_soft_penalty: float = 0.05
